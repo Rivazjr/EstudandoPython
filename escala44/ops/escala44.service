@@ -1,0 +1,17 @@
+[Unit]
+Description=Escala 44 - servidor local e tunel HTTPS
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=/home/rivazhome/escala44
+ExecStart=/usr/bin/python3 /home/rivazhome/escala44/ops/supervisor.py
+Restart=always
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=25
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

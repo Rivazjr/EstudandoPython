@@ -55,35 +55,52 @@ python3 -m unittest -v test_app.py
 
 O teste usa banco temporário e servidor em loopback. Verifica instalação do administrador, autenticação, aprovação, permissões, nome de guerra, disputa pela última cota, duplicidade, limite mensal, cancelamento e capacidade mensal do Escola Segura. Não altera dados reais.
 
-## Publicação com banco neste PC
+## Servidor automático e acesso pela Vercel
 
-A arquitetura escolhida mantém SQLite e o servidor Python neste computador. A Vercel serve a interface e encaminha `/api/*` pelo gateway `api/index.py` para o endereço HTTPS definido em `ESCALA_BACKEND_URL`. Cookies de sessão são mantidos no domínio da interface, com HttpOnly, SameSite=Strict e Secure. O gateway bloqueia redirecionamentos externos e requisições POST de outra origem.
-
-O servidor local escuta somente em 127.0.0.1:8080. O túnel Cloudflare expõe esse servidor por HTTPS sem abrir portas no roteador. O arquivo do banco nunca é enviado à Vercel ou ao GitHub.
-
-Para iniciar o servidor:
+A interface está em https://escala44.vercel.app. O servidor Python e o banco SQLite ficam neste PC. O serviço de usuário systemd `escala44.service` inicia ao entrar na conta, reinicia após falhas e supervisiona o túnel HTTPS. Ele funciona fora da sessão do assistente.
 
 ```bash
-python3 app.py
+systemctl --user status escala44.service
+systemctl --user restart escala44.service
+journalctl --user -u escala44.service -n 40 --no-pager
 ```
 
-Em outro terminal, inicie o cliente Cloudflare baixado nesta pasta:
+Para iniciar também no boot, antes de entrar na conta, um administrador deste PC deve executar uma vez:
 
 ```bash
-./cloudflared tunnel --url http://127.0.0.1:8080 --protocol http2 --no-autoupdate
+sudo loginctl enable-linger rivazhome
 ```
 
-O cliente pode ser baixado do projeto oficial https://github.com/cloudflare/cloudflared/releases. Ele não é incluído no GitHub.
+Esta etapa exige a senha administrativa local e não foi habilitada automaticamente.
 
-**O endereço do túnel rápido muda ao reiniciar.** Atualize `ESCALA_BACKEND_URL` na Vercel e faça novo deploy quando isso acontecer. O computador, o servidor e o túnel precisam permanecer ativos. Este túnel não tem garantia de disponibilidade; para um endereço estável, use um túnel nomeado em uma conta Cloudflare com domínio próprio.
+### Recuperação automática
 
-A chave para criar o primeiro administrador é a `.setup-key` deste PC. Leia-a localmente e use na tela “Primeira instalação”; ela é apagada após a configuração. Nunca a inclua em commits.
+`ops/supervisor.py` acompanha o servidor e o cliente Cloudflare Tunnel. Ele testa o acesso local e público e reinicia processos que falharem. A cada 15 segundos, comunica o endereço atual a uma função de registro no Supabase. A Vercel consulta esse registro a cada chamada e deixa de depender de um endereço fixo ou de novo deploy para reconectar. A interface tenta reconectar automaticamente a cada 15 segundos quando exibe indisponibilidade.
 
-Vercel: equipe wanz2, projeto escala44. O Supabase escala44 foi criado antes da decisão de manter o banco local; ele contém apenas tabelas vazias e não é usado pela aplicação atual. Custo informado na criação: US$ 0/mês.
+O Supabase guarda somente **um endereço de túnel e a data do último sinal de funcionamento**. Cadastros, CPFs, senhas e agendamentos ficam exclusivamente no SQLite local. A tabela técnica tem RLS e não oferece acesso público direto. A função de registro exige uma chave exclusiva, cuja impressão SHA-256 fica na implementação. A chave em si fica apenas no arquivo local `.connection-key` (permissão 0600) e em variável sensível na Vercel. O servidor local também exige essa chave nas chamadas encaminhadas pela Vercel. Ela não vai para o navegador nem para o GitHub.
 
-A interface não foi validada visualmente em navegador neste ambiente. O teste automatizado cobre as regras do servidor local. Não foi configurado deploy automático a partir do GitHub.
+Os endereços registrados expiram após 3 minutos sem sinal. A Vercel retorna uma mensagem de indisponibilidade quando o PC está desligado ou sem rede. A descoberta usa o serviço Supabase já criado (`mgvnrmzfnttwzvwqaozd`), sem transferir o banco de agendamentos para ele.
 
-Endereço publicado: https://escala44.vercel.app
+### Disponibilidade
+
+O PC precisa estar ligado, acordado e conectado à internet. Reinício automático reduz interrupções de processos; não elimina quedas de energia, suspensão, falhas de rede nem indisponibilidade de serviços externos. O túnel rápido Cloudflare é temporário e não oferece garantia de disponibilidade. O registro automático permite trocar seu endereço sem intervenção manual. Há um intervalo de reconexão após falhas; não é uma solução com SLA.
+
+### Arquivos e instalação
+
+- `ops/escala44.service`: unidade systemd instalada em `~/.config/systemd/user/`.
+- `ops/supervisor.py`: supervisor permanente.
+- `ops/registry.ts`: função técnica de descoberta, autenticada com chave exclusiva.
+- `api/index.py`: gateway da Vercel.
+- `.connection-key`, `.setup-key`, `data.sqlite3`: arquivos locais privados, excluídos do GitHub.
+
+Ao instalar em outro computador, ajuste os caminhos absolutos da unidade systemd e preserve o banco e as chaves em local seguro. O cliente `cloudflared` é obtido do projeto oficial https://github.com/cloudflare/cloudflared/releases e não é versionado.
+
+### Testes
+
+```bash
+python3 -m unittest -v test_app.py test_gateway.py
+```
+
+Os testes usam banco temporário e verificam as regras de reserva, permissões, segurança do gateway e falhas de conexão. O teste operacional de recuperação interrompe o supervisor e verifica que systemd o reinicia, publica um novo endereço de túnel e preserva a contagem de cadastros e agendamentos. A validação visual em navegador não foi feita neste ambiente.
+
 Código: https://github.com/Rivazjr/EstudandoPython/tree/escala44/escala44
-
-Foram verificados HTTP 200 da página, JavaScript, CSS e status da API, além de HTTP 401 para consulta sem sessão.

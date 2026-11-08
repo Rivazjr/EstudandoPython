@@ -8,3 +8,6 @@ __pycache__/
 .vercel/
 cloudflared
 *.log
+
+.connection-key
+*.sqlite3.*

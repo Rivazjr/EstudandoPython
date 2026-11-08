@@ -48,6 +48,9 @@ class Handler(BaseHTTPRequestHandler):
   b=p.read_bytes();self.send_response(200);self.send_header('Content-Type', {'css':'text/css','js':'text/javascript','html':'text/html'}[p.suffix[1:]]+'; charset=utf-8');self.send_header('X-Content-Type-Options','nosniff');self.end_headers();self.wfile.write(b)
  def do_POST(self):self.api()
  def api(self):
+  gateway=os.environ.get('ESCALA_GATEWAY_KEY')
+  if gateway and not hmac.compare_digest(self.headers.get('X-Escala-Gateway-Key',''),gateway):
+   return self.reply({'error':'Acesso permitido somente pelo aplicativo.'},403)
   try:
    if self.command=='POST':
     origin=self.headers.get('Origin')
