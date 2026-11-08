@@ -1,0 +1,10 @@
+.setup-key
+*.sqlite3*
+__pycache__/
+
+.env
+.env.*
+!.env.example
+.vercel/
+cloudflared
+*.log
