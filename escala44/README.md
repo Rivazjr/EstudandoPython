@@ -57,50 +57,48 @@ O teste usa banco temporário e servidor em loopback. Verifica instalação do a
 
 ## Servidor automático e acesso pela Vercel
 
-A interface está em https://escala44.vercel.app. O servidor Python e o banco SQLite ficam neste PC. O serviço de usuário systemd `escala44.service` inicia ao entrar na conta, reinicia após falhas e supervisiona o túnel HTTPS. Ele funciona fora da sessão do assistente.
+A interface está em https://escala44.vercel.app. O servidor Python e o banco SQLite ficam neste PC.
+
+O agendador cron do usuário inicia o supervisor ao ligar o PC, sem depender de abrir o chat ou fazer login. Ele também verifica a cada minuto se o supervisor está ativo. O supervisor verifica os processos e a conexão a cada 15 segundos. Um bloqueio de arquivo impede a execução de supervisores duplicados. Se o supervisor encerrar abruptamente, sua próxima execução limpa os processos filhos antigos antes de abrir novos.
+
+A configuração está no bloco `ESCALA44 AUTO` do crontab do usuário e é reproduzida em `ops/escala44.cron`. As entradas anteriores do crontab são preservadas. O serviço cron do sistema está habilitado e ativo. O antigo serviço systemd de usuário foi desabilitado; a inicialização atual não exige `loginctl enable-linger` nem senha administrativa.
 
 ```bash
-systemctl --user status escala44.service
-systemctl --user restart escala44.service
-journalctl --user -u escala44.service -n 40 --no-pager
+crontab -l
+tail -40 /home/rivazhome/escala44/service.log
 ```
 
-Para iniciar também no boot, antes de entrar na conta, um administrador deste PC deve executar uma vez:
+Para suspender essa inicialização, remova o bloco `ESCALA44 AUTO` usando `crontab -e` e encerre o supervisor. Um desligamento normal do supervisor encerra também o servidor e o túnel.
 
-```bash
-sudo loginctl enable-linger rivazhome
-```
+### Recuperação da conexão
 
-Esta etapa exige a senha administrativa local e não foi habilitada automaticamente.
+`ops/supervisor.py` acompanha o servidor e o cliente Cloudflare Tunnel. Ele testa o acesso local e público e reinicia processos que falharem. A cada 15 segundos, comunica o endereço atual a uma função de registro no Supabase. A Vercel consulta esse registro a cada chamada e deixa de depender de um endereço fixo ou de novo deploy para reconectar. A interface tenta reconectar a cada 15 segundos quando exibe indisponibilidade.
 
-### Recuperação automática
+O Supabase guarda somente **um endereço de túnel e a data do último sinal de funcionamento**. Cadastros, CPFs, senhas e agendamentos ficam exclusivamente no SQLite local. A tabela técnica tem RLS e não oferece acesso público direto. A função de registro exige uma chave exclusiva. Sua impressão SHA-256 está na implementação; a chave em si fica apenas no arquivo local `.connection-key` (permissão 0600) e em variável sensível de produção na Vercel. O servidor local exige essa chave nas chamadas encaminhadas. Ela não vai para o navegador nem para o GitHub.
 
-`ops/supervisor.py` acompanha o servidor e o cliente Cloudflare Tunnel. Ele testa o acesso local e público e reinicia processos que falharem. A cada 15 segundos, comunica o endereço atual a uma função de registro no Supabase. A Vercel consulta esse registro a cada chamada e deixa de depender de um endereço fixo ou de novo deploy para reconectar. A interface tenta reconectar automaticamente a cada 15 segundos quando exibe indisponibilidade.
-
-O Supabase guarda somente **um endereço de túnel e a data do último sinal de funcionamento**. Cadastros, CPFs, senhas e agendamentos ficam exclusivamente no SQLite local. A tabela técnica tem RLS e não oferece acesso público direto. A função de registro exige uma chave exclusiva, cuja impressão SHA-256 fica na implementação. A chave em si fica apenas no arquivo local `.connection-key` (permissão 0600) e em variável sensível na Vercel. O servidor local também exige essa chave nas chamadas encaminhadas pela Vercel. Ela não vai para o navegador nem para o GitHub.
-
-Os endereços registrados expiram após 3 minutos sem sinal. A Vercel retorna uma mensagem de indisponibilidade quando o PC está desligado ou sem rede. A descoberta usa o serviço Supabase já criado (`mgvnrmzfnttwzvwqaozd`), sem transferir o banco de agendamentos para ele.
+Os endereços registrados expiram após 3 minutos sem sinal. A Vercel retorna uma mensagem de indisponibilidade quando o PC está desligado ou sem rede. A descoberta usa o projeto Supabase já criado (`mgvnrmzfnttwzvwqaozd`), sem transferir o banco de agendamentos para ele.
 
 ### Disponibilidade
 
-O PC precisa estar ligado, acordado e conectado à internet. Reinício automático reduz interrupções de processos; não elimina quedas de energia, suspensão, falhas de rede nem indisponibilidade de serviços externos. O túnel rápido Cloudflare é temporário e não oferece garantia de disponibilidade. O registro automático permite trocar seu endereço sem intervenção manual. Há um intervalo de reconexão após falhas; não é uma solução com SLA.
+O PC precisa estar ligado, acordado e conectado à internet. Reinício automático reduz interrupções de processos; não elimina quedas de energia, suspensão, falhas de rede nem indisponibilidade de serviços externos. O túnel rápido Cloudflare é temporário e não oferece garantia de disponibilidade. A descoberta automática permite trocar seu endereço sem intervenção manual. Após uma queda do supervisor, o cron pode levar até cerca de um minuto para iniciá-lo novamente, mais o tempo de estabelecer o túnel. Não é uma solução com SLA.
 
 ### Arquivos e instalação
 
-- `ops/escala44.service`: unidade systemd instalada em `~/.config/systemd/user/`.
-- `ops/supervisor.py`: supervisor permanente.
+- `ops/escala44.cron`: inicialização no boot e verificação periódica.
+- `ops/supervisor.py`: supervisão permanente e registro do túnel.
 - `ops/registry.ts`: função técnica de descoberta, autenticada com chave exclusiva.
+- `ops/escala44.service`: alternativa systemd, desabilitada neste PC.
 - `api/index.py`: gateway da Vercel.
-- `.connection-key`, `.setup-key`, `data.sqlite3`: arquivos locais privados, excluídos do GitHub.
+- `.connection-key`, `.setup-key`, `data.sqlite3`, `.supervisor*`: arquivos locais privados, excluídos do GitHub.
 
-Ao instalar em outro computador, ajuste os caminhos absolutos da unidade systemd e preserve o banco e as chaves em local seguro. O cliente `cloudflared` é obtido do projeto oficial https://github.com/cloudflare/cloudflared/releases e não é versionado.
+Ao instalar em outro computador, ajuste os caminhos absolutos do crontab e preserve o banco e as chaves em local seguro. O cliente `cloudflared` é obtido de https://github.com/cloudflare/cloudflared/releases e não é versionado.
 
-### Testes
+### Verificações realizadas
 
 ```bash
 python3 -m unittest -v test_app.py test_gateway.py
 ```
 
-Os testes usam banco temporário e verificam as regras de reserva, permissões, segurança do gateway e falhas de conexão. O teste operacional de recuperação interrompe o supervisor e verifica que systemd o reinicia, publica um novo endereço de túnel e preserva a contagem de cadastros e agendamentos. A validação visual em navegador não foi feita neste ambiente.
+Os testes verificam as regras de reserva, permissões, segurança do gateway e falhas de conexão. A API publicada respondeu HTTP 200 a uma consulta autenticada e retornou os 10 agendamentos existentes. Um teste operacional interrompeu o supervisor e conferiu a recuperação do acesso pela Vercel com um novo endereço de túnel e a preservação das reservas. O boot real do computador e a interface visual em navegador não foram testados.
 
 Código: https://github.com/Rivazjr/EstudandoPython/tree/escala44/escala44

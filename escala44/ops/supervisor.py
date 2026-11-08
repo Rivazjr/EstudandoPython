@@ -1,9 +1,10 @@
 """Keep the local API, HTTPS tunnel and discovery heartbeat running."""
-import json,os,queue,re,signal,subprocess,sys,threading,time,urllib.request
+import fcntl,json,os,queue,re,signal,subprocess,sys,threading,time,urllib.request
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 REGISTRY='https://mgvnrmzfnttwzvwqaozd.supabase.co/functions/v1/escala44-tunnel-registry'
 STOP=threading.Event()
+STATE=ROOT/'.supervisor-state.json'
 def log(message):print(message,flush=True)
 def stop_child(child):
  if child and child.poll() is None:
@@ -28,7 +29,18 @@ def start_tunnel(events):
   child.stdout.close()
  threading.Thread(target=reader,daemon=True).start()
  return child
-def main():
+def cleanup_orphans():
+ try:old=json.loads(STATE.read_text())
+ except (OSError,ValueError):return
+ for pid in old:
+  try:
+   args=Path('/proc/'+str(int(pid))+'/cmdline').read_bytes().split(b'\0')
+   if str(ROOT/'app.py').encode() in args or str(ROOT/'cloudflared').encode() in args:
+    os.kill(int(pid),signal.SIGTERM)
+  except (OSError,ValueError):pass
+ time.sleep(1)
+def run():
+ cleanup_orphans()
  key=(ROOT/'.connection-key').read_text().strip()
  if len(key)<32:raise RuntimeError('Missing connection key')
  env=dict(os.environ,ESCALA_GATEWAY_KEY=key,ESCALA_HTTPS='1',PYTHONUNBUFFERED='1')
@@ -42,6 +54,7 @@ def main():
     local_failures=0;log('Local API started.')
    if tunnel is None or tunnel.poll() is not None:
     tunnel=start_tunnel(events);url=None;tunnel_failures=0;log('HTTPS tunnel started; waiting for address.')
+   tmp=STATE.with_suffix('.tmp');tmp.write_text(json.dumps([api.pid,tunnel.pid]));tmp.replace(STATE)
    while True:
     try:
      pid,found=events.get_nowait()
@@ -60,5 +73,12 @@ def main():
      if tunnel_failures>=3:stop_child(tunnel);tunnel=None;url=None
    STOP.wait(15)
  finally:
-  stop_child(tunnel);stop_child(api)
+  stop_child(tunnel);stop_child(api);STATE.unlink(missing_ok=True)
+def main():
+ os.umask(0o077)
+ with open(ROOT/'.supervisor.lock','a+') as lock:
+  try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+  except BlockingIOError:return
+  lock.seek(0);lock.truncate();lock.write(str(os.getpid()));lock.flush()
+  run()
 if __name__=='__main__':main()

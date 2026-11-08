@@ -1,0 +1,4 @@
+# BEGIN ESCALA44 AUTO
+@reboot /usr/bin/python3 /home/rivazhome/escala44/ops/supervisor.py >> /home/rivazhome/escala44/service.log 2>&1
+* * * * * /usr/bin/python3 /home/rivazhome/escala44/ops/supervisor.py >> /home/rivazhome/escala44/service.log 2>&1
+# END ESCALA44 AUTO
